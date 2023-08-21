@@ -45,7 +45,7 @@ pub trait LocalApiClient {
 
 /// Client for the local tailscaled socket
 #[derive(Clone)]
-pub struct LocalApi<T: LocalApiClient> {
+pub struct LocalApi<T: LocalApiClient + Clone> {
     /// Path to the tailscaled socket
     client: T,
 }
@@ -70,7 +70,7 @@ impl LocalApi<TcpWithPasswordClient> {
     }
 }
 
-impl<T: LocalApiClient> LocalApi<T> {
+impl<T: LocalApiClient + Clone> LocalApi<T> {
     /// Get the certificate and key for a domain. The domain should be one of
     /// the valid domains for the local node.
     pub async fn certificate_pair(&self, domain: &str) -> Result<(PrivateKey, Vec<Certificate>)> {
@@ -139,6 +139,7 @@ impl<T: LocalApiClient> LocalApi<T> {
 
 /// Client that connects to the local tailscaled over a unix socket. This is
 /// used on Linux and other Unix-like systems.
+#[derive(Clone)]
 pub struct UnixStreamClient {
     socket_path: PathBuf,
 }
@@ -179,6 +180,7 @@ impl UnixStreamClient {
 
 /// Client that connects to the local tailscaled over TCP with a password. This
 /// is used on Windows and macOS when sandboxing is enabled.
+#[derive(Clone)]
 pub struct TcpWithPasswordClient {
     port: u16,
     password: String,
