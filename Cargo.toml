@@ -1,0 +1,25 @@
+[package]
+name = "tailscale-localapi"
+description = "Client for the Tailscale local API"
+version = "0.1.0"
+authors = ["John Downey"]
+edition = "2021"
+license = "MIT"
+documentation = "https://docs.rs/tailscale-localapi"
+homepage = "https://github.com/jtdowney/tailscale-localapi"
+
+[dependencies]
+async-trait = "0.1.73"
+base64 = "0.21.2"
+chrono = { version = "0.4.19", features = ["serde"] }
+http = "0.2.6"
+hyper = { version = "0.14.18", features = ["client", "http1"] }
+rustls-pemfile = "1"
+serde = { version = "1", features = ["derive"] }
+serde-aux = "4"
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["net", "rt"] }
+
+[dev-dependencies]
+libc = "0.2.147"
