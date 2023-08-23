@@ -39,13 +39,13 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Abstract trait for the tailscale API client
 #[async_trait]
-pub trait LocalApiClient {
+pub trait LocalApiClient: Clone {
     async fn get(&self, uri: Uri) -> Result<Response<Body>>;
 }
 
 /// Client for the local tailscaled socket
 #[derive(Clone)]
-pub struct LocalApi<T: LocalApiClient + Clone> {
+pub struct LocalApi<T: LocalApiClient> {
     /// Path to the tailscaled socket
     client: T,
 }
@@ -70,7 +70,7 @@ impl LocalApi<TcpWithPasswordClient> {
     }
 }
 
-impl<T: LocalApiClient + Clone> LocalApi<T> {
+impl<T: LocalApiClient> LocalApi<T> {
     /// Get the certificate and key for a domain. The domain should be one of
     /// the valid domains for the local node.
     pub async fn certificate_pair(&self, domain: &str) -> Result<(PrivateKey, Vec<Certificate>)> {
