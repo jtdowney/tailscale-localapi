@@ -1,7 +1,7 @@
 [package]
 name = "tailscale-localapi"
 description = "Client for the Tailscale local API"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["John Downey"]
 edition = "2021"
 license = "MIT"
