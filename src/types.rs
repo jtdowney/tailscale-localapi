@@ -98,7 +98,7 @@ pub struct Status {
     pub backend_state: BackendState,
     #[serde(rename = "AuthURL")]
     pub auth_url: String,
-    #[serde(rename = "TailscaleIPs")]
+    #[serde(rename = "TailscaleIPs", deserialize_with = "deserialize_default_from_null")]
     pub tailscale_ips: Vec<IpAddr>,
     #[serde(rename = "Self")]
     pub self_status: PeerStatus,
@@ -109,6 +109,7 @@ pub struct Status {
     pub cert_domains: Vec<String>,
     #[serde(deserialize_with = "deserialize_default_from_null")]
     pub peer: HashMap<String, PeerStatus>,
+    #[serde(deserialize_with = "deserialize_default_from_null")]
     pub user: HashMap<i64, UserProfile>,
 }
 
