@@ -98,7 +98,10 @@ pub struct Status {
     pub backend_state: BackendState,
     #[serde(rename = "AuthURL")]
     pub auth_url: String,
-    #[serde(rename = "TailscaleIPs", deserialize_with = "deserialize_default_from_null")]
+    #[serde(
+        rename = "TailscaleIPs",
+        deserialize_with = "deserialize_default_from_null"
+    )]
     pub tailscale_ips: Vec<IpAddr>,
     #[serde(rename = "Self")]
     pub self_status: PeerStatus,
@@ -200,7 +203,7 @@ pub struct UserProfile {
     pub login_name: String,
     pub display_name: String,
     #[serde(rename = "ProfilePicURL")]
-    pub profile_pic_url: String,
+    pub profile_pic_url: Option<String>,
 }
 
 /// Whois response
