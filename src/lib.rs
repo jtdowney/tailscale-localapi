@@ -200,6 +200,7 @@ impl LocalApiClient for TcpWithPasswordClient {
                         .encode(format!(":{}", self.password))
                 ),
             )
+            .header("Sec-Tailscale", "localapi")
             .uri(uri)
             .body(Body::empty())?;
 
