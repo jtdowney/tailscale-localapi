@@ -168,7 +168,7 @@ pub struct Node {
     pub sharer: Option<i64>,
     pub key: String,
     pub key_expiry: DateTime<Utc>,
-    pub machine: String,
+    pub machine: Option<String>,
     pub disco_key: String,
     pub addresses: Vec<String>,
     #[serde(rename = "AllowedIPs")]
