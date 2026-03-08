@@ -1,16 +1,19 @@
 use std::{
+    future::Future,
     io,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
 };
 
-use async_trait::async_trait;
 use base64::Engine;
+use bytes::{Buf, Bytes};
 use http::{
     header::{AUTHORIZATION, HOST},
     Request, Response, Uri,
 };
-use hyper::{body::Buf, Body};
+use http_body_util::{BodyExt, Empty};
+use hyper::body::Incoming;
+use hyper_util::rt::TokioIo;
 use tokio::net::{TcpSocket, UnixStream};
 pub use types::*;
 
@@ -25,7 +28,7 @@ pub enum Error {
     #[error("request failed")]
     HyperError(#[from] hyper::Error),
     #[error("http error")]
-    HttpError(#[from] hyper::http::Error),
+    HttpError(#[from] http::Error),
     #[error("unprocessible entity")]
     UnprocessableEntity,
     #[error("unable to parse json")]
@@ -38,9 +41,8 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Abstract trait for the tailscale API client
-#[async_trait]
 pub trait LocalApiClient: Clone {
-    async fn get(&self, uri: Uri) -> Result<Response<Body>>;
+    fn get(&self, uri: Uri) -> impl Future<Output = Result<Response<Incoming>>> + Send;
 }
 
 /// Client for the local tailscaled socket
@@ -83,15 +85,20 @@ impl<T: LocalApiClient> LocalApi<T> {
             )
             .await?;
 
-        let body = hyper::body::aggregate(response.into_body()).await?;
-        let items = rustls_pemfile::read_all(&mut body.reader())?;
+        let body = response.into_body().collect().await?.aggregate();
+        let items = rustls_pemfile::read_all(&mut body.reader())
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         let (certificates, mut private_keys) = items
             .into_iter()
             .map(|item| match item {
-                rustls_pemfile::Item::ECKey(data)
-                | rustls_pemfile::Item::PKCS8Key(data)
-                | rustls_pemfile::Item::RSAKey(data) => Ok((false, data)),
-                rustls_pemfile::Item::X509Certificate(data) => Ok((true, data)),
+                rustls_pemfile::Item::Sec1Key(data) => Ok((false, data.secret_sec1_der().to_vec())),
+                rustls_pemfile::Item::Pkcs8Key(data) => {
+                    Ok((false, data.secret_pkcs8_der().to_vec()))
+                }
+                rustls_pemfile::Item::Pkcs1Key(data) => {
+                    Ok((false, data.secret_pkcs1_der().to_vec()))
+                }
+                rustls_pemfile::Item::X509Certificate(data) => Ok((true, data.to_vec())),
                 _ => Err(Error::UnknownCertificateOrKey),
             })
             .collect::<Result<Vec<_>>>()?
@@ -114,7 +121,7 @@ impl<T: LocalApiClient> LocalApi<T> {
             .client
             .get(Uri::from_static("/localapi/v0/status"))
             .await?;
-        let body = hyper::body::aggregate(response.into_body()).await?;
+        let body = response.into_body().collect().await?.aggregate();
         let status = serde_json::de::from_reader(body.reader())?;
 
         Ok(status)
@@ -130,7 +137,7 @@ impl<T: LocalApiClient> LocalApi<T> {
                     .unwrap(),
             )
             .await?;
-        let body = hyper::body::aggregate(response.into_body()).await?;
+        let body = response.into_body().collect().await?.aggregate();
         let whois = serde_json::de::from_reader(body.reader())?;
 
         Ok(whois)
@@ -144,14 +151,13 @@ pub struct UnixStreamClient {
     socket_path: PathBuf,
 }
 
-#[async_trait]
 impl LocalApiClient for UnixStreamClient {
-    async fn get(&self, uri: Uri) -> Result<Response<Body>> {
+    async fn get(&self, uri: Uri) -> Result<Response<Incoming>> {
         let request = Request::builder()
             .method("GET")
             .header(HOST, "local-tailscaled.sock")
             .uri(uri)
-            .body(Body::empty())?;
+            .body(Empty::<Bytes>::new())?;
 
         let response = self.request(request).await?;
         Ok(response)
@@ -159,9 +165,10 @@ impl LocalApiClient for UnixStreamClient {
 }
 
 impl UnixStreamClient {
-    async fn request(&self, request: Request<Body>) -> Result<Response<Body>> {
-        let stream = UnixStream::connect(&self.socket_path).await?;
-        let (mut request_sender, connection) = hyper::client::conn::handshake(stream).await?;
+    async fn request(&self, request: Request<Empty<Bytes>>) -> Result<Response<Incoming>> {
+        let stream = TokioIo::new(UnixStream::connect(&self.socket_path).await?);
+        let (mut request_sender, connection) =
+            hyper::client::conn::http1::handshake(stream).await?;
 
         tokio::spawn(async move {
             if let Err(e) = connection.await {
@@ -186,9 +193,8 @@ pub struct TcpWithPasswordClient {
     password: String,
 }
 
-#[async_trait]
 impl LocalApiClient for TcpWithPasswordClient {
-    async fn get(&self, uri: Uri) -> Result<Response<Body>> {
+    async fn get(&self, uri: Uri) -> Result<Response<Incoming>> {
         let request = Request::builder()
             .method("GET")
             .header(HOST, "local-tailscaled.sock")
@@ -202,7 +208,7 @@ impl LocalApiClient for TcpWithPasswordClient {
             )
             .header("Sec-Tailscale", "localapi")
             .uri(uri)
-            .body(Body::empty())?;
+            .body(Empty::<Bytes>::new())?;
 
         let response = self.request(request).await?;
         Ok(response)
@@ -210,11 +216,13 @@ impl LocalApiClient for TcpWithPasswordClient {
 }
 
 impl TcpWithPasswordClient {
-    async fn request(&self, request: Request<Body>) -> Result<Response<Body>> {
+    async fn request(&self, request: Request<Empty<Bytes>>) -> Result<Response<Incoming>> {
         let stream = TcpSocket::new_v4()?
             .connect((Ipv4Addr::LOCALHOST, self.port).into())
             .await?;
-        let (mut request_sender, connection) = hyper::client::conn::handshake(stream).await?;
+        let stream = TokioIo::new(stream);
+        let (mut request_sender, connection) =
+            hyper::client::conn::http1::handshake(stream).await?;
 
         tokio::spawn(async move {
             if let Err(e) = connection.await {
