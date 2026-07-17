@@ -4,6 +4,8 @@ services:
   headscale:
     image: docker.io/headscale/headscale:0.29
     command: ["serve"]
+    ports:
+      - "8080:8080"
     volumes:
       - ./config.yaml:/etc/headscale/config.yaml:ro
       - ./derp.yaml:/etc/headscale/derp.yaml:ro
@@ -34,7 +36,7 @@ services:
       retries: 30
 
   node-a:
-    image: docker.io/tailscale/tailscale:stable
+    image: docker.io/tailscale/tailscale:v${TAILSCALE_VERSION:-1.98.9}
     entrypoint: ["/bin/sh", "/test/client-entrypoint.sh"]
     environment:
       TS_HOSTNAME: node-a
@@ -53,7 +55,7 @@ services:
       retries: 30
 
   node-b:
-    image: docker.io/tailscale/tailscale:stable
+    image: docker.io/tailscale/tailscale:v${TAILSCALE_VERSION:-1.98.9}
     entrypoint: ["/bin/sh", "/test/client-entrypoint.sh"]
     environment:
       TS_HOSTNAME: node-b

@@ -14,7 +14,11 @@ use http::{
 use http_body_util::{BodyExt, Empty};
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
-use tokio::net::{TcpSocket, UnixStream};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ClientOptions;
+use tokio::net::TcpSocket;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 pub use types::*;
 
 /// Definitions of types used in the tailscale API
@@ -52,12 +56,23 @@ pub struct LocalApi<T: LocalApiClient> {
     client: T,
 }
 
+#[cfg(unix)]
 impl LocalApi<UnixStreamClient> {
     /// Create a new client for the local tailscaled from the path to the
     /// socket.
     pub fn new_with_socket_path<P: AsRef<Path>>(socket_path: P) -> Self {
         let socket_path = socket_path.as_ref().to_path_buf();
         let client = UnixStreamClient { socket_path };
+        Self { client }
+    }
+}
+
+#[cfg(windows)]
+impl LocalApi<WindowsNamedPipeClient> {
+    /// Create a new client for local tailscaled from a Windows named-pipe path.
+    pub fn new_with_named_pipe_path<P: AsRef<Path>>(pipe_path: P) -> Self {
+        let pipe_path = pipe_path.as_ref().to_path_buf();
+        let client = WindowsNamedPipeClient { pipe_path };
         Self { client }
     }
 }
@@ -146,11 +161,13 @@ impl<T: LocalApiClient> LocalApi<T> {
 
 /// Client that connects to the local tailscaled over a unix socket. This is
 /// used on Linux and other Unix-like systems.
+#[cfg(unix)]
 #[derive(Clone)]
 pub struct UnixStreamClient {
     socket_path: PathBuf,
 }
 
+#[cfg(unix)]
 impl LocalApiClient for UnixStreamClient {
     async fn get(&self, uri: Uri) -> Result<Response<Incoming>> {
         let request = Request::builder()
@@ -164,6 +181,7 @@ impl LocalApiClient for UnixStreamClient {
     }
 }
 
+#[cfg(unix)]
 impl UnixStreamClient {
     async fn request(&self, request: Request<Empty<Bytes>>) -> Result<Response<Incoming>> {
         let stream = TokioIo::new(UnixStream::connect(&self.socket_path).await?);
@@ -185,8 +203,51 @@ impl UnixStreamClient {
     }
 }
 
-/// Client that connects to the local tailscaled over TCP with a password. This
-/// is used on Windows and macOS when sandboxing is enabled.
+/// Client that connects to local tailscaled over a Windows named pipe.
+#[cfg(windows)]
+#[derive(Clone)]
+pub struct WindowsNamedPipeClient {
+    pipe_path: PathBuf,
+}
+
+#[cfg(windows)]
+impl LocalApiClient for WindowsNamedPipeClient {
+    async fn get(&self, uri: Uri) -> Result<Response<Incoming>> {
+        let request = Request::builder()
+            .method("GET")
+            .header(HOST, "local-tailscaled.sock")
+            .uri(uri)
+            .body(Empty::<Bytes>::new())?;
+
+        let response = self.request(request).await?;
+        Ok(response)
+    }
+}
+
+#[cfg(windows)]
+impl WindowsNamedPipeClient {
+    async fn request(&self, request: Request<Empty<Bytes>>) -> Result<Response<Incoming>> {
+        let pipe = ClientOptions::new().open(&self.pipe_path)?;
+        let pipe = TokioIo::new(pipe);
+        let (mut request_sender, connection) = hyper::client::conn::http1::handshake(pipe).await?;
+
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Error in connection: {}", e);
+            }
+        });
+
+        let response = request_sender.send_request(request).await?;
+        if response.status() == 200 {
+            Ok(response)
+        } else {
+            Err(Error::UnprocessableEntity)
+        }
+    }
+}
+
+/// Client that connects to local tailscaled over TCP with a password.
+/// This is used by sandboxed macOS installations.
 #[derive(Clone)]
 pub struct TcpWithPasswordClient {
     port: u16,

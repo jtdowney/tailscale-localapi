@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  TAILSCALE_VERSION: 1.98.9
+
 jobs:
   check:
     name: Check
@@ -36,4 +39,148 @@ jobs:
         run: docker compose -f tests/headscale/compose.yaml logs --no-color
       - name: Remove integration environment
         if: always()
+        run: docker compose -f tests/headscale/compose.yaml down -v --remove-orphans
+
+  headscale-windows:
+    name: Headscale (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify WSL2 availability
+        shell: pwsh
+        run: |
+          wsl.exe --status
+          wsl.exe --version
+      - name: Install Ubuntu 24.04 in WSL2
+        uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: 2
+          update: "true"
+          additional-packages: docker.io docker-compose-v2 ca-certificates curl
+          wsl-conf: |
+            [boot]
+            systemd=true
+      - name: Restart Ubuntu with systemd
+        shell: pwsh
+        run: wsl.exe --terminate Ubuntu-24.04
+      - name: Verify Docker Engine in WSL2
+        shell: wsl-bash {0}
+        run: |
+          systemctl start docker
+          docker version
+          docker compose version
+      - name: Start Headscale and node-b
+        shell: wsl-bash {0}
+        run: |
+          docker compose -f tests/headscale/compose.yaml up -d --wait --wait-timeout 60 headscale bootstrap node-b
+          docker compose -f tests/headscale/compose.yaml ps
+      - name: Read Headscale preauth key
+        id: headscale-auth
+        shell: wsl-bash {0}
+        run: |
+          auth_key="$(docker compose -f tests/headscale/compose.yaml exec -T bootstrap cat /auth/authkey)"
+          echo "::add-mask::$auth_key"
+          echo "auth_key=$auth_key" >> "$(wslpath "$GITHUB_OUTPUT")"
+      - name: Verify Headscale from Windows
+        shell: pwsh
+        run: |
+          Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "`n127.0.0.1 headscale"
+          $response = Invoke-WebRequest -UseBasicParsing -Uri "http://headscale:8080/health"
+          if ($response.StatusCode -ne 200) {
+            throw "Headscale health endpoint returned $($response.StatusCode)"
+          }
+      - name: Install Tailscale for Windows
+        shell: pwsh
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP "tailscale.msi"
+          $log = Join-Path $env:RUNNER_TEMP "tailscale-msi.log"
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-$env:TAILSCALE_VERSION-amd64.msi"
+          Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $msi
+          $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            "/i", $msi,
+            "/qn",
+            "/norestart",
+            "TS_NOLAUNCH=1",
+            "/L*v", $log
+          )
+          if ($process.ExitCode -ne 0) {
+            Get-Content $log
+            throw "Tailscale MSI installation failed with exit code $($process.ExitCode)"
+          }
+          Start-Service Tailscale
+          Get-Service Tailscale
+      - name: Register Windows node-a with Headscale
+        shell: pwsh
+        env:
+          HEADSCALE_AUTH_KEY: ${{ steps.headscale-auth.outputs.auth_key }}
+        run: |
+          $tailscale = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          & $tailscale up `
+            --unattended=true `
+            --login-server=http://headscale:8080 `
+            --auth-key=$env:HEADSCALE_AUTH_KEY `
+            --hostname=node-a `
+            --accept-dns=false
+          if ($LASTEXITCODE -ne 0) {
+            throw "tailscale up failed with exit code $LASTEXITCODE"
+          }
+
+          $deadline = (Get-Date).AddSeconds(30)
+          do {
+            $status = & $tailscale status --json | ConvertFrom-Json
+            $hasNodeB = @($status.Peer.PSObject.Properties.Value) |
+              Where-Object { $_.HostName -eq "node-b" }
+            if (($status.BackendState -eq "Running") -and $hasNodeB) {
+              exit 0
+            }
+            Start-Sleep -Seconds 1
+          } while ((Get-Date) -lt $deadline)
+
+          & $tailscale status --json
+          throw "Windows Tailscale did not reach Running with node-b in its peer map"
+      - name: Run Headscale integration test through Windows LocalAPI
+        shell: pwsh
+        env:
+          TAILSCALE_PIPE: \\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled
+        run: cargo test --test headscale -- --ignored --nocapture
+      - name: Print Windows Tailscale diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-Service Tailscale -ErrorAction Continue | Format-List *
+          $tailscale = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          if (Test-Path $tailscale) {
+            & $tailscale status --json
+          }
+          $log = Join-Path $env:RUNNER_TEMP "tailscale-msi.log"
+          if (Test-Path $log) {
+            Get-Content $log
+          }
+      - name: Print WSL Compose diagnostics
+        if: failure()
+        shell: wsl-bash {0}
+        run: |
+          uname -a
+          docker version || true
+          docker compose version || true
+          docker compose -f tests/headscale/compose.yaml ps || true
+          docker compose -f tests/headscale/compose.yaml logs --no-color || true
+      - name: Log out Windows Tailscale
+        if: always()
+        shell: pwsh
+        run: |
+          $tailscale = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          if (Test-Path $tailscale) {
+            & $tailscale logout
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "tailscale logout failed with exit code $LASTEXITCODE"
+            }
+          }
+      - name: Remove WSL integration environment
+        if: always()
+        shell: wsl-bash {0}
         run: docker compose -f tests/headscale/compose.yaml down -v --remove-orphans
