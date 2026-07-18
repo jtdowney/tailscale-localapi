@@ -1,0 +1,93 @@
+name: tailscale-localapi-tests
+
+services:
+  headscale:
+    image: docker.io/headscale/headscale:0.29
+    command: ["serve"]
+    volumes:
+      - ./config.yaml:/etc/headscale/config.yaml:ro
+      - ./derp.yaml:/etc/headscale/derp.yaml:ro
+      - headscale-state:/var/lib/headscale
+      - headscale-run:/var/run/headscale
+    healthcheck:
+      test: ["CMD", "headscale", "health"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  bootstrap:
+    image: docker.io/headscale/headscale:0.29-debug
+    entrypoint: ["/busybox/sh", "/test/bootstrap.sh"]
+    depends_on:
+      headscale:
+        condition: service_healthy
+    volumes:
+      - ./config.yaml:/etc/headscale/config.yaml:ro
+      - ./derp.yaml:/etc/headscale/derp.yaml:ro
+      - ./bootstrap.sh:/test/bootstrap.sh:ro
+      - headscale-run:/var/run/headscale
+      - auth:/auth
+    healthcheck:
+      test: ["CMD", "/busybox/sh", "-c", "test -s /auth/authkey"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  node-a:
+    image: docker.io/tailscale/tailscale:stable
+    entrypoint: ["/bin/sh", "/test/client-entrypoint.sh"]
+    environment:
+      TS_HOSTNAME: node-a
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    volumes:
+      - ./client-entrypoint.sh:/test/client-entrypoint.sh:ro
+      - auth:/auth:ro
+      - node-a-state:/var/lib/tailscale
+      - node-a-run:/var/run/tailscale
+    healthcheck:
+      test: ["CMD-SHELL", "tailscale --socket=/var/run/tailscale/tailscaled.sock status --json | grep -q '\"BackendState\": \"Running\"'"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  node-b:
+    image: docker.io/tailscale/tailscale:stable
+    entrypoint: ["/bin/sh", "/test/client-entrypoint.sh"]
+    environment:
+      TS_HOSTNAME: node-b
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    volumes:
+      - ./client-entrypoint.sh:/test/client-entrypoint.sh:ro
+      - auth:/auth:ro
+      - node-b-state:/var/lib/tailscale
+      - node-b-run:/var/run/tailscale
+    healthcheck:
+      test: ["CMD-SHELL", "tailscale --socket=/var/run/tailscale/tailscaled.sock status --json | grep -q '\"BackendState\": \"Running\"'"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  tests:
+    build:
+      context: ../..
+      dockerfile: tests/headscale/Dockerfile.test
+    depends_on:
+      node-a:
+        condition: service_healthy
+      node-b:
+        condition: service_healthy
+    volumes:
+      - node-a-run:/var/run/tailscale:ro
+
+volumes:
+  auth:
+  headscale-run:
+  headscale-state:
+  node-a-run:
+  node-a-state:
+  node-b-run:
+  node-b-state:

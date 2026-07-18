@@ -1,0 +1,38 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+
+  headscale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run Headscale integration test
+        run: docker compose -f tests/headscale/compose.yaml up --build --abort-on-container-exit --exit-code-from tests
+      - name: Print container logs
+        if: failure()
+        run: docker compose -f tests/headscale/compose.yaml logs --no-color
+      - name: Remove integration environment
+        if: always()
+        run: docker compose -f tests/headscale/compose.yaml down -v --remove-orphans

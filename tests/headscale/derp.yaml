@@ -1,0 +1,9 @@
+regions:
+  900:
+    regionid: 900
+    regioncode: test
+    nodes:
+      - name: test
+        regionid: 900
+        hostname: derp.test.invalid
+        ipv4: 192.0.2.1
