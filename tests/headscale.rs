@@ -1,19 +1,38 @@
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 
 use std::{env, net::SocketAddr, time::Duration};
 
-use tailscale_localapi::{BackendState, LocalApi, Status, UnixStreamClient, Whois};
+#[cfg(unix)]
+use tailscale_localapi::UnixStreamClient;
+#[cfg(windows)]
+use tailscale_localapi::WindowsNamedPipeClient;
+use tailscale_localapi::{BackendState, LocalApi, Status, Whois};
+
+#[cfg(unix)]
+type TestClient = UnixStreamClient;
+#[cfg(windows)]
+type TestClient = WindowsNamedPipeClient;
 
 const READINESS_TIMEOUT: Duration = Duration::from_secs(30);
 const WHOIS_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn local_api() -> LocalApi<UnixStreamClient> {
-    let socket = env::var("TAILSCALE_SOCKET")
-        .expect("TAILSCALE_SOCKET must identify the Compose LocalAPI socket");
-    LocalApi::new_with_socket_path(socket)
+fn local_api() -> LocalApi<TestClient> {
+    #[cfg(unix)]
+    {
+        let socket = env::var("TAILSCALE_SOCKET")
+            .expect("TAILSCALE_SOCKET must identify the Compose LocalAPI socket");
+        LocalApi::new_with_socket_path(socket)
+    }
+
+    #[cfg(windows)]
+    {
+        let pipe = env::var("TAILSCALE_PIPE")
+            .expect("TAILSCALE_PIPE must identify the Windows LocalAPI named pipe");
+        LocalApi::new_with_named_pipe_path(pipe)
+    }
 }
 
-async fn wait_for_node_b(api: &LocalApi<UnixStreamClient>, deadline: Duration) -> Status {
+async fn wait_for_node_b(api: &LocalApi<TestClient>, deadline: Duration) -> Status {
     let mut last_error = String::from("node-b never appeared in the peer map");
     let readiness = async {
         loop {
@@ -52,7 +71,7 @@ fn node_b_address(status: &Status) -> SocketAddr {
 }
 
 async fn whois_with_timeout(
-    api: &LocalApi<UnixStreamClient>,
+    api: &LocalApi<TestClient>,
     address: SocketAddr,
     deadline: Duration,
 ) -> Whois {

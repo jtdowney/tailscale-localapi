@@ -1,12 +1,14 @@
-#[cfg(unix)]
+#[cfg(windows)]
 mod platform {
     use std::env;
 
+    const DEFAULT_PIPE_PATH: &str = r"\\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled";
+
     async fn run() {
-        let socket_path = env::args()
+        let pipe_path = env::args()
             .nth(1)
-            .unwrap_or_else(|| "/var/run/tailscale/tailscaled.sock".to_string());
-        let client = tailscale_localapi::LocalApi::new_with_socket_path(socket_path);
+            .unwrap_or_else(|| DEFAULT_PIPE_PATH.to_string());
+        let client = tailscale_localapi::LocalApi::new_with_named_pipe_path(pipe_path);
 
         dbg!(client.status().await.unwrap());
     }
@@ -21,6 +23,6 @@ mod platform {
 }
 
 fn main() {
-    #[cfg(unix)]
+    #[cfg(windows)]
     platform::main();
 }
