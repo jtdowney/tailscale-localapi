@@ -28,6 +28,7 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
 
   headscale:
+    name: Headscale (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -180,6 +181,7 @@ jobs:
           docker compose -f tests/headscale/compose.yaml logs --no-color || true
       - name: Log out Windows Tailscale
         if: always()
+        continue-on-error: true
         shell: pwsh
         run: |
           $tailscale = "$env:ProgramFiles\Tailscale\tailscale.exe"
@@ -189,7 +191,6 @@ jobs:
               Write-Warning "tailscale logout failed with exit code $LASTEXITCODE"
             }
           }
-          exit 0
       - name: Remove WSL integration environment
         if: always()
         shell: wsl-bash {0}
