@@ -80,11 +80,18 @@ jobs:
           docker compose -f tests/headscale/compose.yaml ps
       - name: Read Headscale preauth key
         id: headscale-auth
-        shell: wsl-bash {0}
+        shell: pwsh
         run: |
-          auth_key="$(docker compose -f tests/headscale/compose.yaml exec -T bootstrap cat /auth/authkey)"
-          echo "::add-mask::$auth_key"
-          echo "auth_key=$auth_key" >> "$(wslpath "$GITHUB_OUTPUT")"
+          $workspace = (& wsl.exe -d Ubuntu-24.04 -- wslpath -a "$env:GITHUB_WORKSPACE").Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to translate GITHUB_WORKSPACE into a WSL path"
+          }
+          $authKey = (& wsl.exe -d Ubuntu-24.04 -- bash -lc "cd '$workspace' && docker compose -f tests/headscale/compose.yaml exec -T bootstrap cat /auth/authkey").Trim()
+          if (($LASTEXITCODE -ne 0) -or [string]::IsNullOrWhiteSpace($authKey)) {
+            throw "Unable to read the Headscale preauth key"
+          }
+          Write-Output "::add-mask::$authKey"
+          "auth_key=$authKey" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - name: Verify Headscale from Windows
         shell: pwsh
         run: |
