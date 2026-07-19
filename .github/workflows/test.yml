@@ -189,6 +189,7 @@ jobs:
               Write-Warning "tailscale logout failed with exit code $LASTEXITCODE"
             }
           }
+          exit 0
       - name: Remove WSL integration environment
         if: always()
         shell: wsl-bash {0}
