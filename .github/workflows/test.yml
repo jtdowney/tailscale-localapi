@@ -82,10 +82,12 @@ jobs:
         id: headscale-auth
         shell: pwsh
         run: |
-          $workspace = (& wsl.exe -d Ubuntu-24.04 -- wslpath -a "$env:GITHUB_WORKSPACE").Trim()
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to translate GITHUB_WORKSPACE into a WSL path"
+          if (($env:GITHUB_WORKSPACE.Length -lt 3) -or ($env:GITHUB_WORKSPACE[1] -ne ':')) {
+            throw "GITHUB_WORKSPACE is not a drive-qualified Windows path"
           }
+          $drive = $env:GITHUB_WORKSPACE[0].ToString().ToLowerInvariant()
+          $path = $env:GITHUB_WORKSPACE.Substring(2).Replace('\', '/')
+          $workspace = "/mnt/$drive$path"
           $authKey = (& wsl.exe -d Ubuntu-24.04 -- bash -lc "cd '$workspace' && docker compose -f tests/headscale/compose.yaml exec -T bootstrap cat /auth/authkey").Trim()
           if (($LASTEXITCODE -ne 0) -or [string]::IsNullOrWhiteSpace($authKey)) {
             throw "Unable to read the Headscale preauth key"
